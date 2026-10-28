@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090b1c">
+<title>ChatVoi — prueba de voz</title>
+<style>
+:root{color-scheme:dark;--bg:#090b1c;--panel:#141831;--line:#343c70;--pink:#ee6be8;--violet:#815cff;--text:#f7f5ff;--muted:#b9bddc}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#201440,var(--bg) 55%);color:var(--text);font:16px system-ui,-apple-system,sans-serif}
+main{max-width:560px;margin:auto;padding:22px 16px 40px}.brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}.logo{width:48px;height:48px;border-radius:16px;display:grid;place-items:center;background:linear-gradient(135deg,var(--pink),var(--violet));font-size:25px}.brand h1{font-size:25px;margin:0}.brand p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.card{background:rgba(20,24,49,.94);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:0 10px 30px #0002}
+h2{font-size:18px;margin:0 0 12px}.desc{font-size:14px;color:var(--muted);line-height:1.5}
+button,.download{border:0;border-radius:14px;padding:13px 15px;background:linear-gradient(110deg,var(--violet),var(--pink));color:white;font-weight:700;font-size:15px;cursor:pointer;text-decoration:none;display:inline-flex;justify-content:center;align-items:center;min-height:46px}
+button:disabled{opacity:.45;cursor:not-allowed}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:10px}.buttons button{width:100%}.secondary{background:#252b50;border:1px solid #454d83}.full{width:100%;margin-top:12px}
+label{display:flex;justify-content:space-between;gap:12px;font-size:14px;margin:16px 0 8px}input[type=range]{width:100%;accent-color:var(--pink)}
+audio{width:100%;margin-top:14px}.status{padding:10px 12px;background:#0e1228;border-radius:12px;color:#d6d7f4;font-size:13px;line-height:1.5;white-space:pre-wrap}
+.notice{border-left:3px solid var(--pink);padding-left:12px}.small{font-size:12px;color:var(--muted);line-height:1.5}footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
+</style>
+</head>
+<body>
+<main>
+  <header class="brand"><div class="logo">♫</div><div><h1>ChatVoi</h1><p>Prueba de cambio de voz · versión 0.1</p></div></header>
+  <section class="card">
+    <h2>1. Graba tu voz</h2>
+    <p class="desc">Busca un lugar tranquilo. Dale permiso al micrófono cuando el navegador lo solicite.</p>
+    <div class="buttons">
+      <button id="start">● Grabar</button>
+      <button id="stop" class="secondary" disabled>■ Detener</button>
+    </div>
+    <div id="status" class="status" style="margin-top:12px">Listo. Pulsa «Grabar» para comenzar.</div>
+    <audio id="original" controls hidden></audio>
+  </section>
+  <section class="card">
+    <h2>2. Ajusta el tono</h2>
+    <p class="desc">Prueba poco a poco. Este prototipo sube el tono acelerando la reproducción, así que la voz también sonará más rápida y la grabación será más corta.</p>
+    <label for="pitch"><span>Tono / velocidad</span><strong id="pitchValue">1.20×</strong></label>
+    <input id="pitch" type="range" min="1" max="1.5" value="1.2" step="0.01">
+    <div class="buttons" style="margin-top:14px">
+      <button id="preview" class="secondary" disabled>▶ Probar efecto</button>
+      <button id="export" disabled>Guardar voz</button>
+    </div>
+    <audio id="processed" controls hidden></audio>
+    <a id="download" class="download full" hidden download="chatvoi-voz-procesada.webm">⬇ Descargar audio procesado</a>
+    <p class="small">Consejo: un ajuste moderado suele sonar menos caricaturesco. No existe un valor único que haga que todas las voces suenen femeninas.</p>
+  </section>
+  <section class="card">
+    <h2>Qué hace esta versión</h2>
+    <p class="desc notice">La grabación y el procesamiento ocurren en el navegador de tu dispositivo. No se sube el audio a un servidor desde este código.</p>
+    <p class="small">Limitación importante: esto cambia grabaciones guardadas, no el micrófono en directo de Roblox. Para una voz más natural sin acelerar el habla haría falta un algoritmo de cambio de tono más avanzado.</p>
+  </section>
+  <footer>ChatVoi · prototipo experimental para Android</footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let stream=null, recorder=null, chunks=[], rawBlob=null, rawBuffer=null, audioCtx=null, outputBlob=null, busy=false;
+const status = msg => $('status').textContent = msg;
+function mimeType(){
+  const types=['audio/webm;codecs=opus','audio/webm','audio/mp4'];
+  return types.find(t=>window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+}
+$('pitch').addEventListener('input',()=> $('pitchValue').textContent=Number($('pitch').value).toFixed(2)+'×');
+$('start').addEventListener('click', async()=>{
+  try{
+    if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){
+      status('Este navegador no permite grabar aquí. Prueba con una versión actualizada de Chrome y abre la página en un contexto seguro (HTTPS o archivo local compatible).'); return;
+    }
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    chunks=[];
+    const mt=mimeType();
+    recorder=mt?new MediaRecorder(stream,{mimeType:mt}):new MediaRecorder(stream);
+    recorder.ondataavailable=e=>{if(e.data && e.data.size) chunks.push(e.data)};
+    recorder.onerror=()=>status('Hubo un error al grabar. Inténtalo otra vez.');
+    recorder.onstop=async()=>{
+      rawBlob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
+      $('original').src=URL.createObjectURL(rawBlob); $('original').hidden=false;
+      try{
+        audioCtx ||= new (window.AudioContext||window.webkitAudioContext)();
+        rawBuffer=await audioCtx.decodeAudioData(await rawBlob.arrayBuffer());
+        $('preview').disabled=false; $('export').disabled=false;
+        status('Grabación lista. Escucha el original y prueba el tono.');
+      }catch(e){status('Se guardó la grabación, pero este navegador no pudo leer su formato para aplicar el efecto. Prueba Chrome actualizado.');}
+      if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+      $('start').disabled=false; $('stop').disabled=true;
+    };
+    recorder.start(); $('start').disabled=true; $('stop').disabled=false;
+    status('Grabando… habla durante unos segundos y pulsa «Detener».');
+  }catch(e){status('No se pudo abrir el micrófono. Revisa los permisos del navegador y vuelve a intentarlo. ('+e.name+')');}
+});
+$('stop').addEventListener('click',()=>{if(recorder && recorder.state!=='inactive')recorder.stop()});
+async function makeProcessed(){
+  if(!rawBuffer || busy) return null;
+  busy=true; $('preview').disabled=true; $('export').disabled=true;
+  try{
+    audioCtx ||= new (window.AudioContext||window.webkitAudioContext)();
+    await audioCtx.resume();
+    const rate=Number($('pitch').value);
+    const off=new OfflineAudioContext(rawBuffer.numberOfChannels,Math.ceil(rawBuffer.length/rate),rawBuffer.sampleRate);
+    const src=off.createBufferSource(); src.buffer=rawBuffer; src.playbackRate.value=rate; src.connect(off.destination); src.start();
+    const rendered=await off.startRendering();
+    const liveCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const src2=liveCtx.createBufferSource(); src2.buffer=rendered;
+    const dest=liveCtx.createMediaStreamDestination(); src2.connect(dest);
+    const mt=mimeType(); const rec=mt?new MediaRecorder(dest.stream,{mimeType:mt}):new MediaRecorder(dest.stream);
+    const pieces=[];
+    const done=new Promise(resolve=>{
+      rec.ondataavailable=e=>{if(e.data&&e.data.size)pieces.push(e.data)};
+      rec.onstop=()=>resolve(new Blob(pieces,{type:rec.mimeType||'audio/webm'}));
+    });
+    rec.start(); src2.start(); src2.onended=()=>{if(rec.state!=='inactive')rec.stop()};
+    const blob=await done;
+    dest.stream.getTracks().forEach(t=>t.stop()); await liveCtx.close();
+    return blob;
+  } finally {busy=false; $('preview').disabled=false; $('export').disabled=false;}
+}
+$('preview').addEventListener('click',async()=>{
+  try{
+    status('Procesando audio…');
+    outputBlob=await makeProcessed();
+    if(!outputBlob) return;
+    $('processed').src=URL.createObjectURL(outputBlob); $('processed').hidden=false;
+    status('Efecto listo. Pulsa reproducir en el reproductor de abajo.');
+  }catch(e){status('No se pudo procesar el audio en este navegador. Prueba una grabación más corta. ('+e.message+')');}
+});
+$('export').addEventListener('click',async()=>{
+  try{
+    status('Preparando archivo…');
+    outputBlob=await makeProcessed();
+    if(!outputBlob) return;
+    const url=URL.createObjectURL(outputBlob);
+    $('processed').src=url; $('processed').hidden=false;
+    $('download').href=url; $('download').hidden=false;
+    status('Listo. Pulsa «Descargar audio procesado».');
+  }catch(e){status('No se pudo exportar. Inténtalo con una grabación más corta. ('+e.message+')');}
+});
+</script>
+</body>
+</html>
